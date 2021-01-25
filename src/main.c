@@ -8,9 +8,6 @@
 #define WIN_H 768
 #define TARGET_FPS 60
 
-// macro utils
-#define PCAST_AS(A, B) ((B*)A)
-
 void BitArray_set(char* arr, unsigned int idx)
 {
 	size_t block_idx = idx / CHAR_BIT;
@@ -69,7 +66,7 @@ Rectangle Cell_getCollisionRect(Cell const * const self)
 typedef struct Cell_Selectable Cell_Selectable;
 struct Cell_Selectable
 {
-	Cell cell;
+	Cell as_Cell;
 	bool def;
 	bool owned;
 	bool selected;
@@ -101,7 +98,7 @@ bool Cell_Selectable_AreCellsConnected(Cell_Selectable const * const a, Cell_Sel
 
 void Cell_Selectable_updateColor(Cell_Selectable * const self)
 {
-	PCAST_AS(self, Cell)->color = self->selected ? self->selected_color : (self->owned ? self->owned_color : self->normal_color);
+	self->as_Cell.color = self->selected ? self->selected_color : (self->owned ? self->owned_color : self->normal_color);
 }
 
 void Cell_Selectable_setSelected(Cell_Selectable * const self, bool selected)
@@ -121,7 +118,7 @@ void Cell_Selectable_boundToCell(Cell_Selectable * const self, Cell const * cons
 	if (self->attached_cell != to)
 	{
 		self->attached_cell = to;
-		self->attached_pos_diff = Vector2Subtract(PCAST_AS(self, Cell)->pos, to->pos);
+		self->attached_pos_diff = Vector2Subtract(self->as_Cell.pos, to->pos);
 	}
 }
 
@@ -135,7 +132,7 @@ void Cell_Selectable_updatePos(Cell_Selectable * const self)
 {
 	if (self->attached_cell)
 	{
-		PCAST_AS(self, Cell)->pos = Vector2Add(self->attached_cell->pos, self->attached_pos_diff);
+		self->as_Cell.pos = Vector2Add(self->attached_cell->pos, self->attached_pos_diff);
 	}
 }
 
@@ -156,7 +153,7 @@ int main(void)
 	for (int i = 0; i < CELLS_COUNT; ++i)
 	{
 		cells[i] = (Cell_Selectable) {
-			.cell = (Cell) {.pos = Vector2Add(point, (Vector2) {(i - 7) * 65.0, 0.0}), .size = size, .color = RED},
+			.as_Cell = (Cell) {.pos = Vector2Add(point, (Vector2) {(i - 7) * 65.0, 0.0}), .size = size, .color = RED},
 			.selected = false,
 			.def = i - 7 == 0,
 			.owned = i - 7 == 0,
@@ -256,7 +253,7 @@ int main(void)
 		// Update selected state
 		for (int i = 0; i < CELLS_COUNT; ++i)
 		{
-			bool collision = CheckCollisionRecs(Cell_getCollisionRect(PCAST_AS(&cells[i], Cell)), Cell_getCollisionRect(&pointer));
+			bool collision = CheckCollisionRecs(Cell_getCollisionRect(&cells[i].as_Cell), Cell_getCollisionRect(&pointer));
 			if (!selected_cell)
 			{
 				Cell_Selectable_setSelected(&cells[i], collision);
@@ -290,12 +287,12 @@ int main(void)
 				{
 					if (i != j && Cell_Selectable_AreCellsConnected(&cells[i], &cells[j]))
 					{
-						DrawLineV(PCAST_AS(&cells[i], Cell)->pos, PCAST_AS(&cells[j], Cell)->pos, BLACK);
-						Vector2 diff = Vector2Subtract(PCAST_AS(&cells[j], Cell)->pos, PCAST_AS(&cells[i], Cell)->pos);
+						DrawLineV(cells[i].as_Cell.pos, cells[j].as_Cell.pos, BLACK);
+						Vector2 diff = Vector2Subtract(cells[j].as_Cell.pos, cells[i].as_Cell.pos);
 						Vector2 direction = Vector2Normalize(diff);
 						float length = Vector2Length(diff);
 						float speed = 50.0;
-						Vector2 pixel_pos = Vector2Add(PCAST_AS(&cells[i], Cell)->pos, Vector2Scale(direction, fmod(GetTime() * speed, length)));
+						Vector2 pixel_pos = Vector2Add(cells[i].as_Cell.pos, Vector2Scale(direction, fmod(GetTime() * speed, length)));
 						DrawRectangleRec(Rect_CreateCentered(pixel_pos, (Vector2) {.x = 5, .y = 5}), BLACK);
 					}
 				}
@@ -307,20 +304,20 @@ int main(void)
 				{
 					if (!selected_cell || (selected_cell && selected_cell->idx != i))
 					{
-						Cell_draw(PCAST_AS(&cells[i], Cell));
+						Cell_draw(&cells[i].as_Cell);
 					}
 				}
 
 				// Draw selected cells over others
 				if (selected_cell)
 				{
-					Cell_draw(PCAST_AS(selected_cell, Cell));
+					Cell_draw(&selected_cell->as_Cell);
 				}
 			}
 
 			if (connecting_cell)
 			{
-				DrawLineV(PCAST_AS(connecting_cell, Cell)->pos, pointer.pos, WHITE);
+				DrawLineV(connecting_cell->as_Cell.pos, pointer.pos, WHITE);
 			}
 
 			Cell_draw(&pointer);
