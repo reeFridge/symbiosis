@@ -158,8 +158,8 @@ int main(void)
 		cells[i] = (Cell_Selectable) {
 			.cell = (Cell) {.pos = Vector2Add(point, (Vector2) {(i - 7) * 65.0, 0.0}), .size = size, .color = RED},
 			.selected = false,
-			.def = i == 0,
-			.owned = i == 0,
+			.def = i - 7 == 0,
+			.owned = i - 7 == 0,
 			.selected_color = LIME,
 			.owned_color = ORANGE,
 			.normal_color = RED,
@@ -213,7 +213,7 @@ int main(void)
 				Cell_Selectable_unbound(selected_cell);
 			}
 
-			if (connecting_cell && (IsKeyReleased(KEY_LEFT_SHIFT) || IsMouseButtonReleased(MOUSE_LEFT_BUTTON)))
+			if (connecting_cell && connecting_cell != selected_cell && (IsKeyReleased(KEY_LEFT_SHIFT) || IsMouseButtonReleased(MOUSE_LEFT_BUTTON)))
 			{
 				if (Cell_Selectable_AreCellsConnected(selected_cell, connecting_cell))
 				{
@@ -226,17 +226,15 @@ int main(void)
 						Cell_Selectable_ConnectCells(selected_cell, connecting_cell);
 					}
 				}
-				connecting_cell = 0;
-			}
-		}
-		else
-		{
-			if (connecting_cell && (IsKeyReleased(KEY_LEFT_SHIFT) || IsMouseButtonReleased(MOUSE_LEFT_BUTTON)))
-			{
-				connecting_cell = 0;
 			}
 		}
 
+		if (connecting_cell && (IsKeyReleased(KEY_LEFT_SHIFT) || IsMouseButtonReleased(MOUSE_LEFT_BUTTON)))
+		{
+			connecting_cell = 0;
+		}
+
+		// Update owned state
 		for (int i = 0; i < CELLS_COUNT; ++i)
 		{
 			Cell_Selectable_setOwned(&cells[i], false);
@@ -255,6 +253,7 @@ int main(void)
 			}
 		}
 
+		// Update selected state
 		for (int i = 0; i < CELLS_COUNT; ++i)
 		{
 			bool collision = CheckCollisionRecs(Cell_getCollisionRect(PCAST_AS(&cells[i], Cell)), Cell_getCollisionRect(&pointer));
@@ -266,11 +265,15 @@ int main(void)
 					selected_cell = &cells[i];
 				}
 			}
-			else
+			else if (i != selected_cell->idx)
 			{
-				if (!collision && i == selected_cell->idx)
+				Cell_Selectable_setSelected(&cells[i], false);
+			}
+			else // if (selected_cell && i == selected_cell->idx)
+			{
+				Cell_Selectable_setSelected(&cells[i], collision);
+				if (!collision)
 				{
-					Cell_Selectable_setSelected(selected_cell, false);
 					selected_cell = 0;
 				}
 			}
@@ -280,6 +283,7 @@ int main(void)
 		{
 			ClearBackground(LIGHTGRAY);
 
+			// Draw connections & moving cells over them
 			for (int i = 0; i < CELLS_COUNT; ++i)
 			{
 				for (int j = 0; j < CELLS_COUNT; ++j)
@@ -287,21 +291,31 @@ int main(void)
 					if (i != j && Cell_Selectable_AreCellsConnected(&cells[i], &cells[j]))
 					{
 						DrawLineV(PCAST_AS(&cells[i], Cell)->pos, PCAST_AS(&cells[j], Cell)->pos, BLACK);
+						Vector2 diff = Vector2Subtract(PCAST_AS(&cells[j], Cell)->pos, PCAST_AS(&cells[i], Cell)->pos);
+						Vector2 direction = Vector2Normalize(diff);
+						float length = Vector2Length(diff);
+						float speed = 50.0;
+						Vector2 pixel_pos = Vector2Add(PCAST_AS(&cells[i], Cell)->pos, Vector2Scale(direction, fmod(GetTime() * speed, length)));
+						DrawRectangleRec(Rect_CreateCentered(pixel_pos, (Vector2) {.x = 5, .y = 5}), BLACK);
 					}
 				}
 			}
 
-			for (int i = 0; i < CELLS_COUNT; ++i)
+			// Draw cells
 			{
-				if (!selected_cell || (selected_cell && selected_cell->idx != i))
+				for (int i = 0; i < CELLS_COUNT; ++i)
 				{
-					Cell_draw(PCAST_AS(&cells[i], Cell));
+					if (!selected_cell || (selected_cell && selected_cell->idx != i))
+					{
+						Cell_draw(PCAST_AS(&cells[i], Cell));
+					}
 				}
-			}
 
-			if (selected_cell)
-			{
-				Cell_draw(PCAST_AS(selected_cell, Cell));
+				// Draw selected cells over others
+				if (selected_cell)
+				{
+					Cell_draw(PCAST_AS(selected_cell, Cell));
+				}
 			}
 
 			if (connecting_cell)
