@@ -3,6 +3,7 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <limits.h>
+#include <math.h>
 
 #define WIN_W 1024
 #define WIN_H 768
@@ -113,12 +114,12 @@ void Cell_setOwned(Cell * const self, bool owned)
 	Cell_updateColor(self);
 }
 
-void Cell_boundToBox(Cell * const self, Box const * const box)
+void Cell_boundToBox(Cell * const self, Box const * const box, Camera2D camera)
 {
 	if (self->attached_box != box)
 	{
 		self->attached_box = box;
-		self->attached_pos_diff = Vector2Subtract(self->as_Box.pos, box->pos);
+		self->attached_pos_diff = Vector2Subtract(self->as_Box.pos, GetScreenToWorld2D(box->pos, camera));
 	}
 }
 
@@ -128,11 +129,11 @@ void Cell_unbound(Cell * const self)
 	self->attached_pos_diff = Vector2Zero();
 }
 
-void Cell_updatePos(Cell * const self)
+void Cell_updatePos(Cell * const self, Camera2D camera)
 {
 	if (self->attached_box)
 	{
-		self->as_Box.pos = Vector2Add(self->attached_box->pos, self->attached_pos_diff);
+		self->as_Box.pos = Vector2Add(GetScreenToWorld2D(self->attached_box->pos, camera), self->attached_pos_diff);
 	}
 }
 
@@ -147,6 +148,11 @@ int main(void)
 	Box pointer = (Box) {.pos = point, .size = (Vector2) {.x = 10.0, .y = 10.0}, .color = BLUE};
 
 	Cell cells[CELLS_COUNT];
+	Camera2D camera = {0};
+	camera.zoom = 1.0f;
+    camera.offset = (Vector2){ WIN_W / 2, WIN_H / 2 };
+    camera.rotation = 0.0f;
+	camera.target = point;
 
 	char conns[CELLS_COUNT][FS] = {{0}};
 
@@ -200,8 +206,8 @@ int main(void)
 				{
 					if (selected_cell->owned)
 					{
-						Cell_boundToBox(selected_cell, &pointer);
-						Cell_updatePos(selected_cell);
+						Cell_boundToBox(selected_cell, &pointer, camera);
+						Cell_updatePos(selected_cell, camera);
 					}
 				}
 			}
@@ -253,7 +259,8 @@ int main(void)
 		// Update selected state
 		for (int i = 0; i < CELLS_COUNT; ++i)
 		{
-			bool collision = CheckCollisionRecs(Box_getCollisionRect(&cells[i].as_Box), Box_getCollisionRect(&pointer));
+			Box worldPointer = (Box) { .pos = GetScreenToWorld2D(pointer.pos, camera), .size = pointer.size, .color = pointer.color };
+			bool collision = CheckCollisionRecs(Box_getCollisionRect(&cells[i].as_Box), Box_getCollisionRect(&worldPointer));
 			if (!selected_cell)
 			{
 				Cell_setSelected(&cells[i], collision);
@@ -276,49 +283,82 @@ int main(void)
 			}
 		}
 
+        // Camera controls
+        camera.zoom = Clamp(camera.zoom + ((float)GetMouseWheelMove()*0.05f), 0.5f, 1.0f);
+
+		Vector2 direction = Vector2Zero();
+		const float velocity = 3 * 100.0f;
+		if (IsKeyDown(KEY_RIGHT))
+		{
+			direction = Vector2Add(direction, (Vector2) { 1.0f, 0.0f });
+		}
+		else if (IsKeyDown(KEY_LEFT))
+		{
+			direction = Vector2Add(direction, (Vector2) { -1.0f, 0.0f });
+		}
+
+		if (IsKeyDown(KEY_DOWN))
+		{
+			direction = Vector2Add(direction, (Vector2) { 0.0f, 1.0f });
+		}
+		else if (IsKeyDown(KEY_UP))
+		{
+			direction = Vector2Add(direction, (Vector2) { 0.0f, -1.0f });
+		}
+
+		if (Vector2Length(direction) > 0.0f)
+		{
+			direction = Vector2Scale(Vector2Normalize(direction), velocity * GetFrameTime());
+		}
+		camera.target = Vector2Add(camera.target, direction);
+
 		BeginDrawing();
 		{
 			ClearBackground(LIGHTGRAY);
 
-			// Draw connections & moving cells over them
-			for (int i = 0; i < CELLS_COUNT; ++i)
+			BeginMode2D(camera);
 			{
-				for (int j = 0; j < CELLS_COUNT; ++j)
-				{
-					if (i != j && Cell_AreCellsConnected(&cells[i], &cells[j]))
-					{
-						DrawLineV(cells[i].as_Box.pos, cells[j].as_Box.pos, BLACK);
-						Vector2 diff = Vector2Subtract(cells[j].as_Box.pos, cells[i].as_Box.pos);
-						Vector2 direction = Vector2Normalize(diff);
-						float length = Vector2Length(diff);
-						float speed = 50.0;
-						Vector2 pixel_pos = Vector2Add(cells[i].as_Box.pos, Vector2Scale(direction, fmod(GetTime() * speed, length)));
-						DrawRectangleRec(Rect_CreateCentered(pixel_pos, (Vector2) {.x = 5, .y = 5}), BLACK);
-					}
-				}
-			}
-
-			// Draw cells
-			{
+				// Draw connections & moving cells over them
 				for (int i = 0; i < CELLS_COUNT; ++i)
 				{
-					if (!selected_cell || (selected_cell && selected_cell->idx != i))
+					for (int j = 0; j < CELLS_COUNT; ++j)
 					{
-						Box_draw(&cells[i].as_Box);
+						if (i != j && Cell_AreCellsConnected(&cells[i], &cells[j]))
+						{
+							DrawLineV(cells[i].as_Box.pos, cells[j].as_Box.pos, BLACK);
+							Vector2 diff = Vector2Subtract(cells[j].as_Box.pos, cells[i].as_Box.pos);
+							Vector2 direction = Vector2Normalize(diff);
+							float length = Vector2Length(diff);
+							float speed = 50.0;
+							Vector2 pixel_pos = Vector2Add(cells[i].as_Box.pos, Vector2Scale(direction, fmod(GetTime() * speed, length)));
+							DrawRectangleRec(Rect_CreateCentered(pixel_pos, (Vector2) {.x = 5, .y = 5}), BLACK);
+						}
 					}
 				}
 
-				// Draw selected cells over others
-				if (selected_cell)
+				// Draw cells
 				{
-					Box_draw(&selected_cell->as_Box);
+					for (int i = 0; i < CELLS_COUNT; ++i)
+					{
+						if (!selected_cell || (selected_cell && selected_cell->idx != i))
+						{
+							Box_draw(&cells[i].as_Box);
+						}
+					}
+
+					// Draw selected cells over others
+					if (selected_cell)
+					{
+						Box_draw(&selected_cell->as_Box);
+					}
+				}
+
+				if (connecting_cell)
+				{
+					DrawLineV(connecting_cell->as_Box.pos, GetScreenToWorld2D(pointer.pos, camera), WHITE);
 				}
 			}
-
-			if (connecting_cell)
-			{
-				DrawLineV(connecting_cell->as_Box.pos, pointer.pos, WHITE);
-			}
+			EndMode2D();
 
 			Box_draw(&pointer);
 		}
