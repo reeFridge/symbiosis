@@ -5,6 +5,9 @@
 #include <limits.h>
 #include <math.h>
 
+#define CELLS_COUNT 15
+#define FS 2 // 8 * 2 = 16 expect(CELLS_COUNT < FS * 8)
+#define TICK_SEC 5
 #define WIN_W 1024
 #define WIN_H 768
 #define TARGET_FPS 60
@@ -37,6 +40,20 @@ bool BitArray_test(char* arr, unsigned int idx)
 	return !!(arr[block_idx] & mask);
 }
 
+unsigned int BitArray_count(char* arr)
+{
+	unsigned int res = 0;
+	for (int i = 0; i < CELLS_COUNT; ++i)
+	{
+		if (BitArray_test(arr, i))
+		{
+			++res;
+		}
+	}
+
+	return res;
+}
+
 typedef struct Box Box;
 struct Box
 {
@@ -64,6 +81,9 @@ Rectangle Box_getCollisionRect(Box const * const self)
 	return Rect_CreateCentered(self->pos, self->size);
 }
 
+typedef enum Cell_State Cell_State;
+enum Cell_State {ALIVE, DEAD};
+
 typedef struct Cell Cell;
 struct Cell
 {
@@ -74,6 +94,9 @@ struct Cell
 	Color selected_color;
 	Color normal_color;
 	Color owned_color;
+	Cell_State state;
+	int res;
+	int const_out;
 	Box const * attached_box;
 	Vector2 attached_pos_diff;
 	size_t idx;
@@ -99,7 +122,23 @@ bool Cell_AreCellsConnected(Cell const * const a, Cell const * const b)
 
 void Cell_updateColor(Cell * const self)
 {
-	self->as_Box.color = self->selected ? self->selected_color : (self->owned ? self->owned_color : self->normal_color);
+	switch (self->state)
+	{
+		case ALIVE:
+			self->as_Box.color = self->selected
+				? self->selected_color
+				: (self->owned
+						? (self->def
+							? PURPLE
+							: self->owned_color)
+						: self->normal_color);
+			break;
+		case DEAD:
+			self->as_Box.color = DARKGRAY;
+			break;
+		default:
+			break;
+	}
 }
 
 void Cell_setSelected(Cell * const self, bool selected)
@@ -123,6 +162,33 @@ void Cell_boundToBox(Cell * const self, Box const * const box, Camera2D camera)
 	}
 }
 
+unsigned int Cell_getOveralOut(Cell const * const self)
+{
+	const unsigned int connections_count = BitArray_count(self->connections);
+	return self->const_out * connections_count;
+}
+
+void Cell_exchangeRes(Cell * const self, Cell const * const in)
+{
+	self->res += Cell_getOveralOut(in) - Cell_getOveralOut(self);
+}
+
+void Cell_updateState(Cell * const self)
+{
+	switch (self->state)
+	{
+		case ALIVE:
+			break;
+		default:
+			break;
+	}
+
+	if (self->res <= 0)
+	{
+		self->state = DEAD;
+	}
+}
+
 void Cell_unbound(Cell * const self)
 {
 	self->attached_box = 0;
@@ -140,8 +206,14 @@ void Cell_updatePos(Cell * const self, Camera2D camera)
 Vector2 point = (Vector2) { .x = WIN_W / 2, .y = WIN_H / 2 };
 Vector2 size = (Vector2) { .x = 50.0, .y = 50.0 };
 
-#define CELLS_COUNT 15
-#define FS 2 // 8 * 2 = 16 expect(CELLS_COUNT < FS * 8)
+// rules
+// cell.out = f[m](c)
+// where: m - mode, c - connections_count
+// cell.res = cell[c].out - cell.out
+// cell[c].res = cell.out - cell[c].out
+// cell.state = {ALIVE, DEAD}
+// tick = 1000ms
+// foreach tick update_state(&cell)
 
 int main(void)
 {
@@ -150,9 +222,11 @@ int main(void)
 	Cell cells[CELLS_COUNT];
 	Camera2D camera = {0};
 	camera.zoom = 1.0f;
-    camera.offset = (Vector2){ WIN_W / 2, WIN_H / 2 };
+    camera.offset = (Vector2) { WIN_W / 2, WIN_H / 2 };
     camera.rotation = 0.0f;
 	camera.target = point;
+	unsigned int tick = 0;
+	float last_tick_time = 0.0f;
 
 	char conns[CELLS_COUNT][FS] = {{0}};
 
@@ -160,6 +234,9 @@ int main(void)
 	{
 		cells[i] = (Cell) {
 			.as_Box = (Box) {.pos = Vector2Add(point, (Vector2) {(i - 7) * 65.0, 0.0}), .size = size, .color = RED},
+			.res = 10,
+			.const_out = 1,
+			.state = ALIVE,
 			.selected = false,
 			.def = i - 7 == 0,
 			.owned = i - 7 == 0,
@@ -179,6 +256,50 @@ int main(void)
 	SetTargetFPS(TARGET_FPS);
 	while (!WindowShouldClose())
 	{
+		float time = GetTime();
+		if (time - last_tick_time > TICK_SEC)
+		{
+			++tick;
+			last_tick_time = time;
+			for (int i = 0; i < CELLS_COUNT; ++i)
+			{
+				for (int j = 0; j < CELLS_COUNT; ++j)
+				{
+					if (i == j) continue;
+					if (Cell_AreCellsConnected(&cells[i], &cells[j]))
+					{
+						Cell_exchangeRes(&cells[i], &cells[j]);
+					}
+				}
+
+				Cell_updateState(&cells[i]);
+			}
+		}
+
+		// Update owned state
+		for (int i = 0; i < CELLS_COUNT; ++i)
+		{
+			Cell_setOwned(&cells[i], false);
+			for (int j = 0; j < CELLS_COUNT; ++j)
+			{
+				if (i == j) continue;
+				if (Cell_AreCellsConnected(&cells[i], &cells[j]))
+				{
+					if (cells[j].state == DEAD || cells[i].state == DEAD)
+					{
+						Cell_DisconnectCells(&cells[i], &cells[j]);
+					}
+
+					if (cells[j].owned)
+					{
+						Cell_setOwned(&cells[i], true);
+						Cell_setOwned(&cells[j], true);
+						break;
+					}
+				}
+			}
+		}
+
 		Vector2 mouse_pos = GetMousePosition();
 		pointer.pos = mouse_pos;
 
@@ -216,7 +337,11 @@ int main(void)
 				Cell_unbound(selected_cell);
 			}
 
-			if (connecting_cell && connecting_cell != selected_cell && (IsKeyReleased(KEY_LEFT_SHIFT) || IsMouseButtonReleased(MOUSE_LEFT_BUTTON)))
+			if (
+					connecting_cell && connecting_cell->state == ALIVE &&
+					connecting_cell != selected_cell && selected_cell->state == ALIVE &&
+					(IsKeyReleased(KEY_LEFT_SHIFT) || IsMouseButtonReleased(MOUSE_LEFT_BUTTON))
+			   )
 			{
 				if (Cell_AreCellsConnected(selected_cell, connecting_cell))
 				{
@@ -235,25 +360,6 @@ int main(void)
 		if (connecting_cell && (IsKeyReleased(KEY_LEFT_SHIFT) || IsMouseButtonReleased(MOUSE_LEFT_BUTTON)))
 		{
 			connecting_cell = 0;
-		}
-
-		// Update owned state
-		for (int i = 0; i < CELLS_COUNT; ++i)
-		{
-			Cell_setOwned(&cells[i], false);
-			for (int j = 0; j < CELLS_COUNT; ++j)
-			{
-				if (i == j) continue;
-				if (Cell_AreCellsConnected(&cells[i], &cells[j]))
-				{
-					if (cells[i].owned || cells[j].owned)
-					{
-						Cell_setOwned(&cells[i], true);
-						Cell_setOwned(&cells[j], true);
-						break;
-					}
-				}
-			}
 		}
 
 		// Update selected state
@@ -332,6 +438,13 @@ int main(void)
 							float speed = 50.0;
 							Vector2 pixel_pos = Vector2Add(cells[i].as_Box.pos, Vector2Scale(direction, fmod(GetTime() * speed, length)));
 							DrawRectangleRec(Rect_CreateCentered(pixel_pos, (Vector2) {.x = 5, .y = 5}), BLACK);
+							
+							const char * fmt = "%d\0";
+							const unsigned int out = Cell_getOveralOut(&cells[i]);
+							int size = snprintf(0, 0, fmt, out);
+							char buffer[size + 1];
+							snprintf(buffer, sizeof buffer, fmt, out);
+							DrawText(buffer, pixel_pos.x - 20, pixel_pos.y, 10, BLACK);
 						}
 					}
 				}
@@ -344,6 +457,17 @@ int main(void)
 						{
 							Box_draw(&cells[i].as_Box);
 						}
+					}
+
+					for (int i = 0; i < CELLS_COUNT; ++i)
+					{
+						const char * fmt = "%d\0";
+						int size = snprintf(0, 0, fmt, cells[i].res);
+						char buffer[size + 1];
+						snprintf(buffer, sizeof buffer, fmt, cells[i].res);
+						Vector2 pos = cells[i].as_Box.pos;
+						int width = MeasureText(buffer, 20);
+						DrawText(buffer, pos.x - width / 2, pos.y - 50, 20, BLACK);
 					}
 
 					// Draw selected cells over others
@@ -360,6 +484,11 @@ int main(void)
 			}
 			EndMode2D();
 
+			const char * fmt = "tick: %d\0";
+			int size = snprintf(0, 0, fmt, tick);
+			char buffer[size + 1];
+			snprintf(buffer, sizeof buffer, fmt, tick);
+			DrawText(buffer, 10, 10, 20, DARKGRAY);
 			Box_draw(&pointer);
 		}
 		EndDrawing();
