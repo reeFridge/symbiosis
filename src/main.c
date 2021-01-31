@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <limits.h>
 #include <math.h>
+#include <stdlib.h>
 
 #define CELLS_COUNT 15
 #define FS 2 // 8 * 2 = 16 expect(CELLS_COUNT < FS * 8)
@@ -38,6 +39,19 @@ bool BitArray_test(char* arr, unsigned int idx)
 	mask = mask << bit_offset;
 	
 	return !!(arr[block_idx] & mask);
+}
+
+bool BitArray_testEmpty(char* arr)
+{
+	for (int i = 0; i < FS; ++i)
+	{
+		if (arr[i])
+		{
+			return false;
+		}
+	}
+
+	return true;
 }
 
 unsigned int BitArray_count(char* arr)
@@ -96,6 +110,8 @@ struct Cell
 	Color owned_color;
 	Cell_State state;
 	int res;
+	int hp;
+	int age;
 	int const_out;
 	Box const * attached_box;
 	Vector2 attached_pos_diff;
@@ -162,15 +178,26 @@ void Cell_boundToBox(Cell * const self, Box const * const box, Camera2D camera)
 	}
 }
 
-unsigned int Cell_getOveralOut(Cell const * const self)
+unsigned int min_ui(unsigned int a, unsigned int b)
 {
-	const unsigned int connections_count = BitArray_count(self->connections);
+	return a > b ? b : a;
+}
+
+unsigned int Cell_getOveralOut(Cell const * const self, Cell const * const to)
+{
+	const unsigned int connections_count = BitArray_count(to->connections);
+	const unsigned int connections_count_self = BitArray_count(self->connections);
+	if (connections_count_self == 1)
+	{
+		return self->const_out * min_ui(connections_count_self, connections_count);
+	}
+
 	return self->const_out * connections_count;
 }
 
 void Cell_exchangeRes(Cell * const self, Cell const * const in)
 {
-	self->res += Cell_getOveralOut(in) - Cell_getOveralOut(self);
+	self->res += Cell_getOveralOut(in, self) - Cell_getOveralOut(self, in);
 }
 
 void Cell_updateState(Cell * const self)
@@ -178,13 +205,23 @@ void Cell_updateState(Cell * const self)
 	switch (self->state)
 	{
 		case ALIVE:
+			if (self->res <= 0)
+			{
+				int tens = abs(self->res / 10);
+				self->hp -= tens + 1;
+			}
+
+			int generation = (self->age / 10) + 1;
+			self->res -= generation;
+			self->age += 1;
 			break;
 		default:
 			break;
 	}
 
-	if (self->res <= 0)
+	if (self->hp <= 0)
 	{
+		self->hp = 0;
 		self->state = DEAD;
 	}
 }
@@ -234,6 +271,8 @@ int main(void)
 	{
 		cells[i] = (Cell) {
 			.as_Box = (Box) {.pos = Vector2Add(point, (Vector2) {(i - 7) * 65.0, 0.0}), .size = size, .color = RED},
+			.age = 0,
+			.hp = 50,
 			.res = 10,
 			.const_out = 1,
 			.state = ALIVE,
@@ -440,7 +479,7 @@ int main(void)
 							DrawRectangleRec(Rect_CreateCentered(pixel_pos, (Vector2) {.x = 5, .y = 5}), BLACK);
 							
 							const char * fmt = "%d\0";
-							const unsigned int out = Cell_getOveralOut(&cells[i]);
+							const unsigned int out = Cell_getOveralOut(&cells[i], &cells[j]);
 							int size = snprintf(0, 0, fmt, out);
 							char buffer[size + 1];
 							snprintf(buffer, sizeof buffer, fmt, out);
@@ -467,7 +506,14 @@ int main(void)
 						snprintf(buffer, sizeof buffer, fmt, cells[i].res);
 						Vector2 pos = cells[i].as_Box.pos;
 						int width = MeasureText(buffer, 20);
-						DrawText(buffer, pos.x - width / 2, pos.y - 50, 20, BLACK);
+						float box_h = cells[i].as_Box.size.y;
+						DrawText(buffer, pos.x - width / 2, pos.y - box_h / 2 - 45, 20, BLACK);
+
+						size = snprintf(0, 0, fmt, cells[i].hp);
+						char buffer_hp[size + 1];
+						snprintf(buffer_hp, sizeof buffer_hp, fmt, cells[i].hp);
+						width = MeasureText(buffer_hp, 20);
+						DrawText(buffer_hp, pos.x - width / 2, pos.y - box_h / 2 - 25, 20, DARKGREEN);
 					}
 
 					// Draw selected cells over others
